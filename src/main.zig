@@ -16,6 +16,11 @@ pub const std_options: std.Options = .{
 
 var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
 
+const common_headers = [_]std.http.Header {
+    .{ .name = "connection", .value = "close" },
+    .{ .name = "Cache-Control", .value = "no-cache, no-store, must-revalidate"},
+};
+
 const Server = struct {
     watcher: *Reloader,
     public_dir: std.fs.Dir,
@@ -50,10 +55,9 @@ const Server = struct {
 
         if (std.mem.eql(u8, path, "/__live_webserver/reload.js")) {
             try req.respond(reload_js, .{
-                .extra_headers = &.{
+                .extra_headers = &(.{
                     .{ .name = "content-type", .value = "text/javascript" },
-                    .{ .name = "connection", .value = "close" },
-                },
+                } ++ common_headers),
             });
 
             log.debug("sent livereload script \n", .{});
@@ -100,10 +104,9 @@ const Server = struct {
                 if (std.mem.endsWith(u8, req.head.target, "/")) {
                     try req.respond(not_found_html, .{
                         .status = .not_found,
-                        .extra_headers = &.{
+                        .extra_headers = &(.{
                             .{ .name = "content-type", .value = "text/html" },
-                            .{ .name = "connection", .value = "close" },
-                        },
+                        } ++ common_headers),
                     });
                     log.debug("not found\n", .{});
                     return false;
@@ -122,10 +125,10 @@ const Server = struct {
                 );
                 try req.respond(message, .{
                     .status = .internal_server_error,
-                    .extra_headers = &.{
+                    .extra_headers = &(.{
                         .{ .name = "content-type", .value = "text/html" },
-                        .{ .name = "connection", .value = "close" },
-                    },
+                        
+                    } ++ common_headers),
                 });
                 log.debug("error: {s}\n", .{@errorName(err)});
                 return false;
@@ -156,10 +159,9 @@ const Server = struct {
 
             try req.respond(injected, .{
                 .status = .ok,
-                .extra_headers = &.{
+                .extra_headers = &(.{
                     .{ .name = "content-type", .value = "text/html" },
-                    .{ .name = "connection", .value = "close" },
-                },
+                } ++ common_headers),
             });
 
             log.debug("sent file\n", .{});
@@ -167,10 +169,9 @@ const Server = struct {
         } else {
             try req.respond(contents, .{
                 .status = .ok,
-                .extra_headers = &.{
+                .extra_headers = &(.{
                     .{ .name = "content-type", .value = @tagName(mime_type) },
-                    .{ .name = "connection", .value = "close" },
-                },
+                } ++ common_headers),
             });
             log.debug("sent file\n", .{});
             return false;
@@ -189,11 +190,10 @@ fn appendSlashRedirect(
     );
     try req.respond(not_found_html, .{
         .status = .see_other,
-        .extra_headers = &.{
+        .extra_headers = &(.{
             .{ .name = "location", .value = location },
             .{ .name = "content-type", .value = "text/html" },
-            .{ .name = "connection", .value = "close" },
-        },
+        } ++ common_headers),
     });
     log.debug("append final slash redirect\n", .{});
 }
