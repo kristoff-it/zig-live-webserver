@@ -5,7 +5,7 @@ const mime = @import("mime");
 const Allocator = std.mem.Allocator;
 const Reloader = @import("Reloader.zig");
 const not_found_html = @embedFile("404.html");
-const zinereload_js = @embedFile("watcher/zinereload.js");
+const reload_js = @embedFile("watcher/reload.js");
 const assert = std.debug.assert;
 
 const log = std.log.scoped(.server);
@@ -48,8 +48,8 @@ const Server = struct {
             });
         }
 
-        if (std.mem.eql(u8, path, "/__zine/zinereload.js")) {
-            try req.respond(zinereload_js, .{
+        if (std.mem.eql(u8, path, "/__live_webserver/reload.js")) {
+            try req.respond(reload_js, .{
                 .extra_headers = &.{
                     .{ .name = "content-type", .value = "text/javascript" },
                     .{ .name = "connection", .value = "close" },
@@ -60,7 +60,7 @@ const Server = struct {
             return false;
         }
 
-        if (std.mem.eql(u8, path, "/__zine/ws")) {
+        if (std.mem.eql(u8, path, "/__live_webserver/ws")) {
             var it = req.iterateHeaders();
             const key = while (it.next()) |header| {
                 if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
@@ -143,7 +143,7 @@ const Server = struct {
 
         if (mime_type == .@"text/html") {
             const injection =
-                \\<script src="/__zine/zinereload.js"></script>
+                \\<script src="/__live_webserver/reload.js"></script>
             ;
             const head = "</head>";
             const head_pos = std.mem.indexOf(u8, contents, head) orelse contents.len;

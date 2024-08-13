@@ -1,9 +1,9 @@
 function log() {
-  console.log("[Zine Reloader]", ...arguments);
+  console.log("[Live Webserver Reloader]", ...arguments);
 }
 
-function zineConnect() {
-  let socket = new WebSocket("ws://" + window.location.host + "/__zine/ws");
+function liveWebserverConnect() {
+  let socket = new WebSocket("ws://" + window.location.host + "/__live_webserver/ws");
 
   socket.addEventListener("open", (event) => {
    log("connected");
@@ -27,7 +27,7 @@ function zineConnect() {
         const links = document.querySelectorAll("link");
         for (let i = 0; i < links.length; i++) {
           const link = links[i];
-          if (link._zine_temp) continue;
+          if (link._live_webserver_temp) continue;
           
           let url = new URL(link.href);
           if (url.pathname == msg.path) {
@@ -35,7 +35,7 @@ function zineConnect() {
             url.search = now;
             let copy = link.cloneNode(false);
             copy.href = url;
-            link._zine_temp = true;
+            link._live_webserver_temp = true;
             link.parentElement.appendChild(copy);
             setTimeout(function(){
               link.remove();
@@ -67,7 +67,7 @@ function zineConnect() {
         }
       }
     } else if (msg.command == "build"){
-      const id = "__zine_build_box";
+      const id = "__live_webserver_build_box";
       if(msg.err != "") {
         let box = document.getElementById(id);
         if (box == null) {
@@ -76,7 +76,7 @@ function zineConnect() {
           box.id = id;
           document.body.appendChild(box); 
         }
-        box.innerHTML = "<h1 style=\"color: red\">ZINE BUILD ERROR</h1>" + msg.err;
+        box.innerHTML = "<h1 style=\"color: red\">BUILD ERROR</h1>" + msg.err;
       } else {
         let box = document.getElementById(id);
         if (box != null) box.remove();
@@ -89,7 +89,7 @@ function zineConnect() {
 
   socket.addEventListener("close", (event) => {
     log("close", event);
-    setTimeout(zineConnect, 3000);
+    setTimeout(liveWebserverConnect, 3000);
   });
   
   socket.addEventListener("error", (event) => {
@@ -97,4 +97,4 @@ function zineConnect() {
   });
 }
 
-zineConnect();
+liveWebserverConnect();

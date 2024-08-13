@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) !void {
         const options = b.addOptions();
         const out = options.contents.writer();
         try out.writeAll(
-            \\// module = zine
+            \\// module = live-webserver
             \\const std = @import("std");
             \\pub const log_scope_levels: []const std.log.ScopeLevel = &.{
             \\

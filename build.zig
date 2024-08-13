@@ -1,8 +1,8 @@
-const zine = @This();
+const live_webserver = @This();
 const std = @import("std");
 
-// This file only contains definitions that are considered Zine's public
-// interface. Zine's main build function is in another castle!
+// This file only contains definitions that are considered Live Webserver's public
+// interface. Live Webserver's main build function is in another castle!
 pub const build = @import("build/tools.zig").build;
 
 pub const DevelopmentServerOptions = struct {
@@ -24,7 +24,7 @@ pub fn addDevelopmentServer(
         optimize = if (b.option(
             bool,
             "debug",
-            "build Zine tools in debug mode",
+            "build Live Webserver in debug mode",
         ) orelse false) .Debug else .ReleaseFast;
         scopes = b.option(
             []const []const u8,
@@ -33,12 +33,12 @@ pub fn addDevelopmentServer(
         ) orelse &.{};
     }
 
-    const zine_dep = b.dependencyFromBuildZig(zine, .{
+    const live_webserver_dep = b.dependencyFromBuildZig(live_webserver, .{
         .optimize = optimize,
         .scope = scopes,
     });
 
-    const server_exe = zine_dep.artifact("server");
+    const server_exe = live_webserver_dep.artifact("server");
     const run_server = b.addRunArtifact(server_exe);
     run_server.addArg(b.graph.zig_exe); // #1
     run_server.addArg(b.install_path); // #2
