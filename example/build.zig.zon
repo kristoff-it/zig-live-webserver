@@ -1,0 +1,15 @@
+.{
+    .name = "live-webserver-example",
+    .version = "0.0.0",
+    .dependencies = .{
+        .@"live-webserver" = .{
+            .path = "../",
+        },
+    },
+    .paths = .{
+        "src",
+        "build",
+        "build.zig",
+        "build.zig.zon",
+    },
+}
