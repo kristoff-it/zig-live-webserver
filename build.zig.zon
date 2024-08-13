@@ -1,0 +1,43 @@
+.{
+    .name = "zine",
+    .version = "0.0.0",
+    .dependencies = .{
+        .gfm = .{
+            .url = "git+https://github.com/kristoff-it/cmark-gfm.git#b7034624e7da6857a26e4720cd7fde26d5bc715c",
+            .hash = "122018a99dd8299e00d6b3279fc5fee9f93fd4c773db34f6390fcbed320cf4d652c1",
+        },
+        .mime = .{
+            .url = "git+https://github.com/andrewrk/mime.git#0b676643886b1e2f19cf11b4e15b028768708342",
+            .hash = "12209083b0c43d0f68a26a48a7b26ad9f93b22c9cff710c78ddfebb47b89cfb9c7a4",
+        },
+        .ws = .{
+            .url = "git+https://github.com/karlseguin/websocket.zig.git#c77f87d0e6548865636eb9781106a8be72e5755a",
+            .hash = "12208720b772330f309cfb48957f4152ee0930b716837d0c1d07fee2dea2f4dc712e",
+        },
+        .frontmatter = .{
+            .path = "frontmatter",
+        },
+        .superhtml = .{
+            .url = "git+https://github.com/kristoff-it/superhtml#c9fe65c67ac9d4f1bf30e2f78d4a60bf42b0b26d",
+            .hash = "12206d96e7bb0e807def94910d0509252f2727b2096052eaf013842a4581a6531020",
+        },
+        .ziggy = .{
+            .url = "git+https://github.com/kristoff-it/ziggy#20c8088dbf4b22dc2f6e21d289cfb3dcc25c8cae",
+            .hash = "12206a0d6884ef31e3d4e47d5c9c6c4121b0a891258d6072ad7f5bac826803d29d36",
+        },
+        .zeit = .{
+            .url = "git+https://github.com/rockorager/zeit#02b347da743098f1bf8a88e590d38011b188ab51",
+            .hash = "1220478f0d836049cef3e203e665103c0c280b87d3c74b50c8b79c4054a6624498f9",
+        },
+        .@"flow-syntax" = .{
+            .url = "git+https://github.com/neurocyte/flow-syntax#26b99478af9a1f09e0af8fd77fbdbe44e2015da4",
+            .hash = "1220f993fa053a2a76355906e74e1559f770fd612b303c8b4a1bafa116ab157b5efa",
+        },
+        .@"zig-afl-kit" = .{
+            .url = "git+https://github.com/kristoff-it/zig-afl-kit#f003bfe714f2964c90939fdc940d5993190a66ec",
+            .hash = "1220f2d8402bb7bbc4786b9c0aad73910929ea209cbd3b063842371d68abfed33c1e",
+            .lazy = true,
+        },
+    },
+    .paths = .{"."},
+}
