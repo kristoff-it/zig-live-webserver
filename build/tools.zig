@@ -10,8 +10,6 @@ pub fn build(b: *std.Build) !void {
         "logging scopes to enable",
     ) orelse &.{};
 
-    const mode = .{ .target = target, .optimize = optimize };
-
     const options = blk: {
         const options = b.addOptions();
         const out = options.contents.writer();
