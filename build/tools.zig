@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) !void {
 
     const server = b.addExecutable(.{
         .name = "server",
-        .root_source_file = b.path("src/exes/server/main.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
