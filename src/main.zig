@@ -16,9 +16,9 @@ pub const std_options: std.Options = .{
 
 var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
 
-const common_headers = [_]std.http.Header {
+const common_headers = [_]std.http.Header{
     .{ .name = "connection", .value = "close" },
-    .{ .name = "Cache-Control", .value = "no-cache, no-store, must-revalidate"},
+    .{ .name = "Cache-Control", .value = "no-cache, no-store, must-revalidate" },
 };
 
 const Server = struct {
@@ -127,7 +127,6 @@ const Server = struct {
                     .status = .internal_server_error,
                     .extra_headers = &(.{
                         .{ .name = "content-type", .value = "text/html" },
-                        
                     } ++ common_headers),
                 });
                 log.debug("error: {s}\n", .{@errorName(err)});
