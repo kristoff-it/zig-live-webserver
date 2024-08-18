@@ -3,6 +3,7 @@ const live_webserver = @import("live-webserver");
 
 pub fn build(b: *std.Build) void {
     b.installFile("src/index.html", "index.html");
+    b.installFile("src/second_page.html", "second_page.html");
 
     const serve_step = b.step("serve", "serves on development server");
     live_webserver.addDevelopmentServer(b, serve_step, .{

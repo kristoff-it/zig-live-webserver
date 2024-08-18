@@ -1,0 +1,39 @@
+html {
+    height: 100%;
+}
+
+body {
+    display: flex;
+    flex-flow: column;
+    height: 100%;
+    margin: 0px;
+}
+
+#toolbar {
+    flex: 0 1 auto;
+    border-bottom: 5px solid;
+}
+
+iframe {
+    flex: 1 1 auto;
+    padding: 0px;
+    margin: 0px;
+    border: 0px;
+}
+
+/*********************/
+
+#toolbar {
+    border-color: #777777;
+}
+
+body {
+    background-color: #dddddd;
+    color: #000000;
+}
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #222222;
+        color: #f7f7f7;
+    }
+}
