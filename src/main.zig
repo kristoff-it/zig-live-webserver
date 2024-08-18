@@ -105,6 +105,12 @@ fn failWithError(operation: []const u8, err: anytype) noreturn {
     std.process.exit(1);
 }
 
+const embed_files = [_][]const u8{
+    "style.css",
+    "script.js",
+    "icon.svg",
+};
+
 const Request = struct {
     // Fields are in initialization order.
     gpa: std.mem.Allocator,
@@ -144,10 +150,12 @@ const Request = struct {
         (handle_req: {
             if (std.mem.endsWith(u8, path, "/__live_webserver/")) {
                 break :handle_req req.handleEmbed("index.html", "text/html");
-            } else if (std.mem.eql(u8, path, "/__live_webserver/style.css")) {
-                break :handle_req req.handleEmbed("style.css", "text/css");
-            } else if (std.mem.eql(u8, path, "/__live_webserver/script.js")) {
-                break :handle_req req.handleEmbed("script.js", "text/javascript");
+            } else inline for (embed_files) |embed_file| {
+                if (std.mem.eql(u8, path, "/__live_webserver/" ++ embed_file)) {
+                    const mime_type = mime.extension_map.get(fs.path.extension(path)) orelse
+                        .@"application/octet-stream";
+                    break :handle_req req.handleEmbed(embed_file, @tagName(mime_type));
+                }
             } else if (std.mem.eql(u8, path, "/__live_webserver/reload.js")) {
                 break :handle_req req.handleReloadJs();
             } else if (std.mem.eql(u8, path, "/__live_webserver/ws")) {

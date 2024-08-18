@@ -12,6 +12,7 @@ body {
 #toolbar {
     flex: 0 1 auto;
     border-bottom: 5px solid;
+    height: 32px;
 }
 
 iframe {
