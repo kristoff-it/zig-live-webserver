@@ -13,6 +13,8 @@ body {
     flex: 0 1 auto;
     border-bottom: 5px solid;
     height: 32px;
+    display: flex;
+    flex-flow: row;
 }
 
 iframe {
@@ -20,6 +22,17 @@ iframe {
     padding: 0px;
     margin: 0px;
     border: 0px;
+}
+
+#navbar_container {
+    flex: 1 1 auto;
+    padding-top: 5px;
+    padding-right: 15px;
+    padding-left: 15px;
+}
+
+#navbar {
+    width: 100%;
 }
 
 /*********************/
