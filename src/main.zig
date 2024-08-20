@@ -119,7 +119,7 @@ const Request = struct {
     connection_hijacked: bool,
     allocator_arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
-    request: std.http.Server.Request,
+    http: std.http.Server.Request,
 
     // Not initialized in this code but utilized by http server.
     buffer: [1024]u8,
@@ -136,7 +136,7 @@ const Request = struct {
         req.allocator = req.allocator_arena.allocator();
 
         var http_server = std.http.Server.init(req.conn, &req.buffer);
-        req.request = http_server.receiveHead() catch |err| {
+        req.http = http_server.receiveHead() catch |err| {
             if (err != error.HttpConnectionClosing) {
                 log.err("Error with getting request headers:{s}", .{@errorName(err)});
                 // TODO: We're supposed to server an error to the request on some of these
@@ -146,7 +146,7 @@ const Request = struct {
             return;
         };
 
-        const path = req.request.head.target;
+        const path = req.http.head.target;
         (handle_req: {
             if (std.mem.endsWith(u8, path, "/__live_webserver/")) {
                 break :handle_req req.handleEmbed("index.html", "text/html");
@@ -164,7 +164,7 @@ const Request = struct {
                 break :handle_req req.handleFile();
             }
         }) catch |err| {
-            log.err("Error {s} responding to request to {s}", .{ @errorName(err), path });
+            log.warn("Error {s} responding to request from {any} for {s}", .{ @errorName(err), req.conn.address, path });
         };
     }
 
@@ -174,7 +174,7 @@ const Request = struct {
     };
 
     fn handleEmbed(req: *Request, comptime filename: []const u8, content_type: []const u8) !void {
-        try req.request.respond(@embedFile(filename), .{
+        try req.http.respond(@embedFile(filename), .{
             .extra_headers = &(.{
                 .{ .name = "content-type", .value = content_type },
             } ++ common_headers),
@@ -186,39 +186,55 @@ const Request = struct {
         @panic("reload.js not implemented yet!!");
     }
     fn handleWebsocket(req: *Request) !void {
-        _ = req;
-        //         if (std.mem.eql(u8, path, "/__live_webserver/ws")) {
-        //             var it = req.iterateHeaders();
-        //             const key = while (it.next()) |header| {
-        //                 if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
-        //                     break header.value;
-        //                 }
-        //             } else {
-        //                 log.debug("couldn't find key header!\n", .{});
-        //                 return false;
-        //             };
+        var it = req.http.iterateHeaders();
+        const key = while (it.next()) |header| {
+            if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
+                break header.value;
+            }
+        } else {
+            req.serveError("missing sec-websocket-key header", .bad_request);
+            return error.MissingSecWebsocketKey;
+        };
 
-        //             log.debug("key = '{s}'", .{key});
+        const hash_byte_len = 20;
+        var encoded_hash: [std.base64.standard.Encoder.calcSize(hash_byte_len)]u8 = undefined;
+        {
+            var hasher = std.crypto.hash.Sha1.init(.{});
+            hasher.update(key);
+            hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
 
-        //             var hasher = std.crypto.hash.Sha1.init(.{});
-        //             hasher.update(key);
-        //             hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+            var h: [hash_byte_len]u8 = undefined;
+            hasher.final(&h);
 
-        //             var h: [20]u8 = undefined;
-        //             hasher.final(&h);
+            _ = std.base64.standard.Encoder.encode(&encoded_hash, &h);
+        }
 
+        var buffer: [4000]u8 = undefined;
+        var response = req.http.respondStreaming(.{
+            .send_buffer = &buffer,
+            .respond_options = .{
+                .status = .switching_protocols,
+                .extra_headers = &.{
+                    .{ .name = "Upgrade", .value = "websocket" },
+                    .{ .name = "Connection", .value = "upgrade" },
+                    .{ .name = "Sec-Websocket-Accept", .value = &encoded_hash },
+                },
+                .transfer_encoding = .none,
+            },
+        });
+
+        try response.flush();
+
+        // req.connection_hijacked = true;
         //             const ws = try std.Thread.spawn(.{}, Reloader.handleWs, .{
         //                 s.watcher,
         //                 req,
         //                 h,
         //             });
         //             ws.detach();
-        //             return true;
-        //         }
-
     }
     fn handleFile(req: *Request) !void {
-        var path = req.request.head.target;
+        var path = req.http.head.target;
 
         if (std.mem.indexOf(u8, path, "..")) |_| {
             req.serveError("'..' not allowed in URLs", .bad_request);
@@ -275,15 +291,17 @@ const Request = struct {
             return req.handleAppendSlash();
         }
 
-        const content_type = if (std.mem.startsWith(u8, @tagName(mime_type), "text")) ct: {
-            break :ct std.fmt.allocPrint(req.allocator, "{s}; charset=utf-8", .{@tagName(mime_type)}) catch |err| {
-                req.serveError("handling mine types", .internal_server_error);
-                return err;
-            };
-        } else @tagName(mime_type);
+        const content_type = switch (mime_type) {
+            inline else => |mt| blk: {
+                if (std.mem.startsWith(u8, @tagName(mt), "text")) {
+                    break :blk @tagName(mt) ++ "; charset=utf-8";
+                }
+                break :blk @tagName(mt);
+            },
+        };
 
         var buffer: [4000]u8 = undefined;
-        var response = req.request.respondStreaming(.{
+        var response = req.http.respondStreaming(.{
             .send_buffer = &buffer,
             // .content_length = metadata.size(),
             .respond_options = .{
@@ -300,9 +318,9 @@ const Request = struct {
         const location = try std.fmt.allocPrint(
             req.allocator,
             "{s}/",
-            .{req.request.head.target},
+            .{req.http.head.target},
         );
-        try req.request.respond("redirecting...", .{
+        try req.http.respond("redirecting...", .{
             .status = .see_other,
             .extra_headers = &(.{
                 .{ .name = "location", .value = location },
@@ -314,7 +332,7 @@ const Request = struct {
     fn serveError(req: *Request, comptime reason: ?[]const u8, comptime status: std.http.Status) void {
         const sep = if (reason) |_| ": " else ".";
         const text = std.fmt.comptimePrint("{d} {s}{s}{s}", .{ @intFromEnum(status), comptime status.phrase().?, sep, reason orelse "" });
-        req.request.respond(text, .{
+        req.http.respond(text, .{
             .status = status,
             .extra_headers = &(.{
                 .{ .name = "content-type", .value = "text/text" },

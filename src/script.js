@@ -35,3 +35,25 @@ navbar.addEventListener("change", function() {
     pathChange("navbar", navbar.value);
 });
 pathChange("hash", window.location.hash);
+
+let socket = null;
+function newSocket() {
+    socket = new WebSocket("ws://" + window.location.host + "/__live_webserver/ws");
+
+    socket.addEventListener("error", (event) => {
+        console.log("error", event);
+    });
+    socket.addEventListener("open", (event) => {
+        console.log("connected");
+    });
+
+    // Listen for messages
+    socket.addEventListener("message", (event) => {
+        console.log("message", event);
+    });
+    socket.addEventListener("close", (event) => {
+        console.log("close", event);
+    });
+}
+
+newSocket();
