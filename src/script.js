@@ -4,7 +4,7 @@ let navbar = document.getElementById("navbar");
 let last_path_set = null;
 
 function pathChange(source, path) {
-    if (source === "hash" && path.length > 1) {
+    if (source === "hash" && path[0] == "#" && path.length > 1) {
         path = path.substring(1);
     }
     if (path === last_path_set) {
@@ -12,10 +12,7 @@ function pathChange(source, path) {
     }
     last_path_set = path;
     if (source !== "iframe") {
-        // Force iframe to local website, to avoid security errors
-        // related to accessing an iframe on a different domain.
-        mainframe.contentWindow.location = window.location.origin;
-        mainframe.contentWindow.location.pathname = path;
+        mainframe.contentWindow.location.href = window.location.origin + (path.startsWith("/") ? "": "/") + path;
     }
     if (source !== "hash") {
         window.location.hash = path;
