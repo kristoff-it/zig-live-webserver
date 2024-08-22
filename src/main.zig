@@ -7,6 +7,7 @@ const Reloader = @import("Reloader.zig");
 const not_found_html = @embedFile("404.html");
 const reload_js = @embedFile("watcher/reload.js");
 const assert = std.debug.assert;
+const websocket = @import("websocket.zig");
 
 const log = std.log.scoped(.server);
 pub const std_options: std.Options = .{
@@ -225,13 +226,8 @@ const Request = struct {
 
         try response.flush();
 
-        // req.connection_hijacked = true;
-        //             const ws = try std.Thread.spawn(.{}, Reloader.handleWs, .{
-        //                 s.watcher,
-        //                 req,
-        //                 h,
-        //             });
-        //             ws.detach();
+        req.connection_hijacked = true;
+        websocket.Connection.spawn(req.gpa, req.conn.stream);
     }
     fn handleFile(req: *Request) !void {
         var path = req.http.head.target;
@@ -342,3 +338,7 @@ const Request = struct {
         };
     }
 };
+
+test {
+    _ = websocket;
+}

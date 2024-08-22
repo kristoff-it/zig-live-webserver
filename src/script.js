@@ -42,6 +42,7 @@ function newSocket() {
     });
     socket.addEventListener("open", (event) => {
         console.log("connected");
+        socket.send("Hello WS");
     });
 
     // Listen for messages
