@@ -33,31 +33,14 @@ pub fn main() void {
     const debug = std.mem.eql(u8, args[5], "Debug");
     const input_dirs = args[6..];
 
-    _ = zig_exe;
-    _ = rebuild_step_name;
+    const reloader = Reloader.start(gpa, zig_exe, root_dir_path, input_dirs, rebuild_step_name) catch |err| {
+        failWithError("Starting reloader", err);
+    };
     _ = debug;
-    _ = input_dirs;
+    _ = reloader;
 
     var root_dir: fs.Dir = fs.cwd().openDir(root_dir_path, .{}) catch |err| failWithError("open serving directory", err);
     defer root_dir.close();
-
-    //     var watcher = try Reloader.init(
-    //         gpa,
-    //         zig_exe,
-    //         root_dir_path,
-    //         input_dirs,
-    //         rebuild_step_name,
-    //         debug,
-    //     );
-
-    //     var server: Server = .{
-    //         .watcher = &watcher,
-    //         .public_dir = root_dir,
-    //     };
-    //     defer server.deinit();
-
-    //     const watch_thread = try std.Thread.spawn(.{}, Reloader.listen, .{&watcher});
-    //     watch_thread.detach();
 
     {
         var request_pool: std.Thread.Pool = undefined;
@@ -101,7 +84,7 @@ pub fn main() void {
     }
 }
 
-fn failWithError(operation: []const u8, err: anytype) noreturn {
+pub fn failWithError(operation: []const u8, err: anytype) noreturn {
     std.debug.print("Unrecoverable Failure: {s} encountered error {s}.\n", .{ operation, @errorName(err) });
     std.process.exit(1);
 }
@@ -219,6 +202,7 @@ const Request = struct {
                     .{ .name = "Upgrade", .value = "websocket" },
                     .{ .name = "Connection", .value = "upgrade" },
                     .{ .name = "Sec-Websocket-Accept", .value = &encoded_hash },
+                    .{ .name = "connection", .value = "close" },
                 },
                 .transfer_encoding = .none,
             },

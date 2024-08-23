@@ -23,7 +23,7 @@ pub const Connection = struct {
             .stream = stream,
         };
 
-        const ws = try std.Thread.spawn(.{}, Connection.readLoop, .{
+        const ws = try std.Thread.spawn(.{}, Connection.readThread, .{
             conn,
         });
         ws.detach();
@@ -36,8 +36,8 @@ pub const Connection = struct {
     }
 
     fn readThread(conn: *Connection) void {
-        conn.readLoop() catch |err| {
-            _ = err; // TODO
+        conn.readLoop() catch {
+            // _ = err; // TODO
             @panic("read loop error");
         };
     }
