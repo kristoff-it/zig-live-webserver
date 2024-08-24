@@ -11,7 +11,8 @@ const websocket = @import("websocket.zig");
 
 const log = std.log.scoped(.server);
 pub const std_options: std.Options = .{
-    .log_level = .err,
+    // .log_level = .warn,
+    .log_level = .info,
     .log_scope_levels = options.log_scope_levels,
 };
 
@@ -37,7 +38,6 @@ pub fn main() void {
         failWithError("Starting reloader", err);
     };
     _ = debug;
-    _ = reloader;
 
     var root_dir: fs.Dir = fs.cwd().openDir(root_dir_path, .{}) catch |err| failWithError("open serving directory", err);
     defer root_dir.close();
@@ -63,6 +63,7 @@ pub fn main() void {
             };
             request.gpa = gpa;
             request.public_dir = root_dir;
+            request.reloader = reloader;
             request.conn = tcp_server.accept() catch |err| {
                 switch (err) {
                     error.ConnectionAborted, error.ConnectionResetByPeer => {
@@ -99,6 +100,7 @@ const Request = struct {
     // Fields are in initialization order.
     gpa: std.mem.Allocator,
     public_dir: std.fs.Dir,
+    reloader: *Reloader,
     conn: std.net.Server.Connection,
     connection_hijacked: bool,
     allocator_arena: std.heap.ArenaAllocator,
@@ -170,48 +172,8 @@ const Request = struct {
         @panic("reload.js not implemented yet!!");
     }
     fn handleWebsocket(req: *Request) !void {
-        var it = req.http.iterateHeaders();
-        const key = while (it.next()) |header| {
-            if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
-                break header.value;
-            }
-        } else {
-            req.serveError("missing sec-websocket-key header", .bad_request);
-            return error.MissingSecWebsocketKey;
-        };
-
-        const hash_byte_len = 20;
-        var encoded_hash: [std.base64.standard.Encoder.calcSize(hash_byte_len)]u8 = undefined;
-        {
-            var hasher = std.crypto.hash.Sha1.init(.{});
-            hasher.update(key);
-            hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-
-            var h: [hash_byte_len]u8 = undefined;
-            hasher.final(&h);
-
-            _ = std.base64.standard.Encoder.encode(&encoded_hash, &h);
-        }
-
-        var buffer: [4000]u8 = undefined;
-        var response = req.http.respondStreaming(.{
-            .send_buffer = &buffer,
-            .respond_options = .{
-                .status = .switching_protocols,
-                .extra_headers = &.{
-                    .{ .name = "Upgrade", .value = "websocket" },
-                    .{ .name = "Connection", .value = "upgrade" },
-                    .{ .name = "Sec-Websocket-Accept", .value = &encoded_hash },
-                    .{ .name = "connection", .value = "close" },
-                },
-                .transfer_encoding = .none,
-            },
-        });
-
-        try response.flush();
-
+        try req.reloader.spawnConnection(&req.http);
         req.connection_hijacked = true;
-        websocket.Connection.spawn(req.gpa, req.conn.stream);
     }
     fn handleFile(req: *Request) !void {
         var path = req.http.head.target;

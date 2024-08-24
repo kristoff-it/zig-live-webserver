@@ -24,7 +24,7 @@ watcher: Watcher,
 status_lock: std.Thread.Mutex = .{},
 current_status: *Status,
 
-const log = std.log.scoped(.watcher);
+const log = std.log.scoped(.reloader);
 
 pub fn start(
     gpa: std.mem.Allocator,
@@ -63,20 +63,119 @@ fn run(reloader: *Reloader) void {
     };
 }
 
-pub fn onInputChange(self: *Reloader, path: []const u8, name: []const u8) void {
+pub fn onInputChange(reloader: *Reloader, path: []const u8, name: []const u8) void {
     std.debug.print("INPUT CHANGE: {s}\n", .{path});
-    _ = self;
+    _ = reloader;
     _ = name;
 }
 
-pub fn onOutputChange(self: *Reloader, path: []const u8, name: []const u8) void {
+pub fn onOutputChange(reloader: *Reloader, path: []const u8, name: []const u8) void {
     std.debug.print("OUTPUT CHANGE: {s}\n", .{path});
-    _ = self;
+    _ = reloader;
     _ = name;
 }
+
+pub fn spawnConnection(reloader: *Reloader, request: *std.http.Server.Request) !void {
+    const conn = try reloader.gpa.create(Connection);
+    errdefer reloader.gpa.destroy(conn);
+
+    // const status = blk: {
+    //     reloader.status_lock.lock();
+    //     defer reloader.status_lock.lock();
+
+    //     reloader.current_status.ref_count += 1;
+    //     break :blk reloader.current_status;
+    // };
+
+    conn.* = .{
+        .gpa = reloader.gpa,
+        .ws = undefined,
+        .reloader = reloader,
+    };
+    try conn.ws.init(request);
+
+    const watch_thread = try std.Thread.spawn(.{}, Connection.watchThread, .{
+        conn,
+    });
+    watch_thread.detach();
+}
+
+pub const Connection = struct {
+    gpa: std.mem.Allocator,
+    ws: websocket.Connection,
+    reloader: *Reloader,
+
+    fail: struct {
+        lock: std.Thread.Mutex = .{},
+        first_error: ?anyerror = null,
+    } = .{},
+
+    fn watchThread(conn: *Connection) void {
+        defer conn.ws.stream.close();
+        defer conn.gpa.destroy(conn);
+
+        const read_thread = std.Thread.spawn(.{}, Connection.readThread, .{conn}) catch |err| {
+            log.err("Error creating read thread: {s}", .{@errorName(err)});
+            return;
+        };
+
+        conn.watchLoop() catch |err| {
+            conn.fail.lock.lock();
+            defer conn.fail.lock.unlock();
+
+            if (conn.fail.first_error == null) {
+                conn.fail.first_error = err;
+            }
+            return;
+        };
+
+        read_thread.join();
+
+        if (conn.fail.first_error) |first_error| {
+            if (first_error != error.WebsocketClosed) {
+                log.warn("Connection had error {s}", .{@errorName(first_error)});
+            }
+        }
+    }
+
+    fn watchLoop(conn: *Connection) !void {
+        // current_status: *Status,
+        _ = conn;
+    }
+
+    fn readThread(conn: *Connection) void {
+        defer conn.ws.stream.close();
+
+        var buffer: [100]u8 = undefined;
+        while (true) {
+            const msg = conn.ws.readMessage(&buffer) catch |err| {
+                conn.fail.lock.lock();
+                defer conn.fail.lock.unlock();
+
+                if (conn.fail.first_error == null) {
+                    conn.fail.first_error = err;
+                }
+                return;
+            };
+
+            for (msg) |*char| {
+                if (!std.ascii.isPrint(char.*)) {
+                    char.* = '.';
+                }
+            }
+            log.warn("Unknown message via websocket: <{s}>", .{msg});
+        }
+    }
+
+    //     // Have either the writing thread or the reading thread spawn the other and do a join at the end.
+    //     // That thread can be the done to delete the connection from gpa.
+    //     // Writer thread watches for changes to post about, but doesn't own stream writing.  That is because
+    //     // the read thread needs to respond to pings.  So instead any writes must be surrounded with use of write_lock.
+    //     // Writer thread waits for updates with a timeout, and sends a ping on the timeout. If no pong since last ping, kill the conn.
+};
 
 const Status = struct {
-    // Don't modify without holding status_lock.
+    // Don't modify ref_count without holding status_lock.
     ref_count: u16 = 1,
     current: union(enum) {
         building: [400]u8,

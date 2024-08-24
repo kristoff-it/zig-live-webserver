@@ -7,45 +7,90 @@ pub const Connection = struct {
     stream: std.net.Stream,
     write_lock: std.Thread.Mutex = .{},
 
-    pub fn spawn(gpa: std.mem.Allocator, stream: std.net.Stream) void {
-        trySpawn(gpa, stream) catch |err| {
-            log.warn("Error spawning websocket: {s}", .{@errorName(err)});
-        };
-    }
-    pub fn trySpawn(gpa: std.mem.Allocator, stream: std.net.Stream) !void {
-        errdefer stream.close();
-
-        const conn = try gpa.create(Connection);
-        errdefer gpa.destroy(conn);
-
-        conn.* = .{
-            .gpa = gpa,
-            .stream = stream,
+    pub fn init(conn: *Connection, request: *std.http.Server.Request) !void {
+        var it = request.iterateHeaders();
+        const key = while (it.next()) |header| {
+            if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
+                break header.value;
+            }
+        } else {
+            // req.serveError("missing sec-websocket-key header", .bad_request);
+            return error.MissingSecWebsocketKey;
         };
 
-        const ws = try std.Thread.spawn(.{}, Connection.readThread, .{
-            conn,
+        const hash_byte_len = 20;
+        var encoded_hash: [std.base64.standard.Encoder.calcSize(hash_byte_len)]u8 = undefined;
+        {
+            var hasher = std.crypto.hash.Sha1.init(.{});
+            hasher.update(key);
+            hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+
+            var h: [hash_byte_len]u8 = undefined;
+            hasher.final(&h);
+
+            const written = std.base64.standard.Encoder.encode(&encoded_hash, &h);
+            std.debug.assert(written.len == encoded_hash.len);
+        }
+
+        var buffer: [4000]u8 = undefined;
+        var response = request.respondStreaming(.{
+            .send_buffer = &buffer,
+            .respond_options = .{
+                .status = .switching_protocols,
+                .extra_headers = &.{
+                    .{ .name = "Upgrade", .value = "websocket" },
+                    .{ .name = "Connection", .value = "upgrade" },
+                    .{ .name = "Sec-Websocket-Accept", .value = &encoded_hash },
+                    .{ .name = "connection", .value = "close" },
+                },
+                .transfer_encoding = .none,
+            },
         });
-        ws.detach();
 
-        // Have either the writing thread or the reading thread spawn the other and do a join at the end.
-        // That thread can be the done to delete the connection from gpa.
-        // Writer thread watches for changes to post about, but doesn't own stream writing.  That is because
-        // the read thread needs to respond to pings.  So instead any writes must be surrounded with use of write_lock.
-        // Writer thread waits for updates with a timeout, and sends a ping on the timeout. If no pong since last ping, kill the conn.
+        try response.flush();
+
+        conn.stream = request.server.connection.stream;
     }
 
-    fn readThread(conn: *Connection) void {
-        conn.readLoop() catch {
-            // _ = err; // TODO
-            @panic("read loop error");
+    const MessageKind = enum {
+        binary,
+        text,
+    };
+
+    /// Thread safe, lock ensures one message sent at a time.
+    pub fn writeMessage(conn: *Connection, bytes: []const u8, kind: MessageKind) !void {
+        // NOT named `write` because websockets is a message protocol, not a stream protocol.
+
+        const op_code: Header.OpCode = switch (kind) {
+            .binary => .binary,
+            .text => .text,
         };
+
+        const header: Header = .{
+            .finish = true,
+            .op_code = op_code,
+            .payload_len = @intCast(bytes.len),
+            .mask = null,
+        };
+        try conn.writeWithHeader(header, bytes);
     }
-    fn readLoop(conn: *Connection) !void {
+
+    fn writeWithHeader(conn: *Connection, header: Header, payload: []const u8) !void {
+        const writer = conn.stream.writer();
+
+        conn.write_lock.lock();
+        defer conn.write_lock.unlock();
+
+        try header.write(writer);
+        try writer.writeAll(payload);
+    }
+
+    /// Not thread safe, must be only called by one thread at a time.
+    pub fn readMessage(conn: *Connection, buffer: []u8) ![]u8 {
+        // NOT named `read` because websockets is a message protocol, not a stream protocol.
+
         const reader = conn.stream.reader();
-        // We're only handling simple signals here.  Ok to make much larger if a real use case arises.
-        // Just don't always keep the buffer in memory always if messages becomes more than a few kb.
-        var buffer: [100]u8 = undefined;
+
         var current_length: u64 = 0;
         while (true) {
             const header = try Header.read(reader);
@@ -53,20 +98,38 @@ pub const Connection = struct {
                 return error.ExpectedContinuation;
             }
             if (header.payload_len + current_length > buffer.len) {
-                return error.PayloadUnreasonablyLarge;
+                return error.NoSpaceLeft;
             }
-            try reader.readNoEof((&buffer)[current_length..header.payload_len]);
+            try reader.readNoEof(buffer[current_length..header.payload_len]);
 
             if (header.mask) |mask| {
-                for (0.., (&buffer)[current_length..header.payload_len]) |i, *b| {
+                for (0.., buffer[current_length..header.payload_len]) |i, *b| {
                     b.* ^= mask[i % 4];
                 }
             }
             current_length += header.payload_len;
 
-            if (header.finish) {
-                std.debug.print("Got msg {any}: {s}\n", .{ header, (&buffer)[0..current_length] });
-                current_length = 0;
+            switch (header.op_code) {
+                .continuation, .text, .binary => {
+                    if (header.finish) {
+                        return buffer[0..current_length];
+                    }
+                },
+
+                .close => {
+                    return error.WebsocketClosed;
+                },
+
+                .ping => {
+                    try conn.writeWithHeader(.{
+                        .finish = true,
+                        .op_code = .pong,
+                        .payload_len = 0,
+                        .mask = null,
+                    }, &.{});
+                },
+
+                .pong => {},
             }
         }
     }
