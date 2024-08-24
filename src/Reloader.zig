@@ -75,7 +75,7 @@ pub fn onOutputChange(reloader: *Reloader, path: []const u8, name: []const u8) v
     _ = name;
 }
 
-pub fn spawnConnection(reloader: *Reloader, request: *std.http.Server.Request) !void {
+pub fn spawnConnection(reloader: *Reloader, ws: websocket.Connection) !void {
     const conn = try reloader.gpa.create(Connection);
     errdefer reloader.gpa.destroy(conn);
 
@@ -89,10 +89,9 @@ pub fn spawnConnection(reloader: *Reloader, request: *std.http.Server.Request) !
 
     conn.* = .{
         .gpa = reloader.gpa,
-        .ws = undefined,
+        .ws = ws,
         .reloader = reloader,
     };
-    try conn.ws.init(request);
 
     const watch_thread = try std.Thread.spawn(.{}, Connection.watchThread, .{
         conn,

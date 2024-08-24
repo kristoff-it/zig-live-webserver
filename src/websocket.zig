@@ -3,11 +3,10 @@ const std = @import("std");
 const log = std.log.scoped(.websockets);
 
 pub const Connection = struct {
-    gpa: std.mem.Allocator,
     stream: std.net.Stream,
     write_lock: std.Thread.Mutex = .{},
 
-    pub fn init(conn: *Connection, request: *std.http.Server.Request) !void {
+    pub fn init(request: *std.http.Server.Request) !Connection {
         var it = request.iterateHeaders();
         const key = while (it.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
@@ -49,7 +48,9 @@ pub const Connection = struct {
 
         try response.flush();
 
-        conn.stream = request.server.connection.stream;
+        return .{
+            .stream = request.server.connection.stream,
+        };
     }
 
     const MessageKind = enum {

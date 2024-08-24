@@ -172,7 +172,8 @@ const Request = struct {
         @panic("reload.js not implemented yet!!");
     }
     fn handleWebsocket(req: *Request) !void {
-        try req.reloader.spawnConnection(&req.http);
+        const ws = try websocket.Connection.init(&req.http);
+        try req.reloader.spawnConnection(ws);
         req.connection_hijacked = true;
     }
     fn handleFile(req: *Request) !void {
