@@ -110,7 +110,7 @@ pub const Connection = struct {
     } = .{},
 
     fn watchThread(conn: *Connection) void {
-        defer conn.ws.stream.close();
+        defer conn.ws.close();
         defer conn.gpa.destroy(conn);
 
         const read_thread = std.Thread.spawn(.{}, Connection.readThread, .{conn}) catch |err| {
@@ -143,7 +143,7 @@ pub const Connection = struct {
     }
 
     fn readThread(conn: *Connection) void {
-        defer conn.ws.stream.close();
+        defer conn.ws.close();
 
         var buffer: [100]u8 = undefined;
         while (true) {
