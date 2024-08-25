@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) !void {
             \\.{{.scope = .{s}, .level = .debug}},
         , std.zig.fmtId(l));
         try out.writeAll("};");
+        try out.print("pub const frame_path = \"{s}\";", .{"%E2%9A%A1"}); // Setup for making this configurable. 127.0.0.1:1990/🗲/#/⚡ http://127.0.0.1:1990/%F0%9F%97%B2/#/%E2%9A%A1
         break :blk options.createModule();
     };
 

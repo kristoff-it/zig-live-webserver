@@ -55,7 +55,7 @@ pub fn main() void {
         }) catch |err| failWithError("listen", err);
         defer tcp_server.deinit();
 
-        std.debug.print("\x1b[2K\rServing website at http://{any}/__live_webserver/\n", .{tcp_server.listen_address.in});
+        std.debug.print("\x1b[2K\rServing website at http://{any}/" ++ options.frame_path ++ "/\n", .{tcp_server.listen_address.in});
 
         accept: while (true) {
             const request = gpa.create(Request) catch |err| {
@@ -133,8 +133,10 @@ const Request = struct {
         };
 
         const path = req.http.head.target;
+
+        std.debug.print(">>{s}<<\n", .{path});
         (handle_req: {
-            if (std.mem.endsWith(u8, path, "/__live_webserver/")) {
+            if (std.mem.startsWith(u8, path, "/" ++ options.frame_path ++ "/")) {
                 break :handle_req req.handleEmbed("index.html", "text/html");
             } else inline for (embed_files) |embed_file| {
                 if (std.mem.eql(u8, path, "/__live_webserver/" ++ embed_file)) {
