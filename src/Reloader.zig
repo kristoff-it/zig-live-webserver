@@ -22,6 +22,7 @@ watcher: Watcher,
 // Lock on both current_status field, AND
 // all Status.ref_count.
 status_lock: std.Thread.Mutex = .{},
+status_condition: std.Thread.Condition = .{},
 current_status: *Status,
 
 const log = std.log.scoped(.reloader);
@@ -79,14 +80,6 @@ pub fn spawnConnection(reloader: *Reloader, ws: websocket.Connection) !void {
     const conn = try reloader.gpa.create(Connection);
     errdefer reloader.gpa.destroy(conn);
 
-    // const status = blk: {
-    //     reloader.status_lock.lock();
-    //     defer reloader.status_lock.lock();
-
-    //     reloader.current_status.ref_count += 1;
-    //     break :blk reloader.current_status;
-    // };
-
     conn.* = .{
         .gpa = reloader.gpa,
         .ws = ws,
@@ -138,11 +131,39 @@ pub const Connection = struct {
     }
 
     fn watchLoop(conn: *Connection) !void {
-        // current_status: *Status,
-        _ = conn;
+        var iteration: ?u64 = null;
+        
+        while (true) {
+            const status = blk: {
+                conn.reloader.status_lock.lock();
+                defer conn.reloader.status_lock.unlock();
+
+                while (iteration >= conn.reloader.current_status.iteration) {
+                    conn.reloader.status_condition.wait(&conn.reloader.status_lock) catch {};
+
+                    // TODO: occasionally send pings, check the last pong was recieved?
+                    conn.fail.lock.lock();
+                    defer conn.fail.lock.unlock();
+                    if (conn.fail.first_error) {
+                        return;
+                    }
+                }
+                conn.reloader.current_status.retain();
+                break :blk conn.reloader.current_status;
+            }
+            defer status.release();
+            iteration = status.iteration;
+
+            try conn.ws.writeMessage(status.contents, .text);
+            if (status.shutdown) {
+                return error.ServerShutdown;
+            }
+        }
     }
 
     fn readThread(conn: *Connection) void {
+        // Kick the watch thread to notice the disconnect.  Hits all waiting threads, but that's ok collateral.
+        defer conn.reloader.status_condition.broadcast();
         defer conn.ws.close();
 
         var buffer: [100]u8 = undefined;
@@ -165,22 +186,25 @@ pub const Connection = struct {
             log.warn("Unknown message via websocket: <{s}>", .{msg});
         }
     }
-
-    //     // Have either the writing thread or the reading thread spawn the other and do a join at the end.
-    //     // That thread can be the done to delete the connection from gpa.
-    //     // Writer thread watches for changes to post about, but doesn't own stream writing.  That is because
-    //     // the read thread needs to respond to pings.  So instead any writes must be surrounded with use of write_lock.
-    //     // Writer thread waits for updates with a timeout, and sends a ping on the timeout. If no pong since last ping, kill the conn.
 };
 
 const Status = struct {
-    // Don't modify ref_count without holding status_lock.
-    ref_count: u16 = 1,
-    current: union(enum) {
-        building: [400]u8,
-        build_error: []u8,
-        serve,
-    },
+    ref_count: std.atomic.Value(u16) = std.atomic.Value(u16).init(1),
+    iteration: u64,
+    contents: []const u8,
+    shutdown: bool = false,
+
+    fn retain(status: *Status) void {
+        const count = status.ref_count.fetchAdd(1, .acq_rel);
+        std.debug.assert(count >= 2);
+    }
+    fn release(status: *Status, gpa: std.mem.Allocator) void {
+        const count = ref_count.fetchSub(1, .acq_rel);
+        if (count == 0) {
+            gpa.free(status.contents);
+            gpa.destroy(status);
+        }
+    }
 };
 
 /////////////////////////////////
