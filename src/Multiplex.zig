@@ -125,7 +125,7 @@ fn loop(m: *Multiplex) noreturn {
             if (now >= output_at) {
                 m.output_at = null;
 
-                {
+			    if (!m.building and m.build_success) {
                     std.debug.print("Fake output\n", .{});
                     var writer: JsonWriter = .{};
                     writer.init(m.gpa);
@@ -284,6 +284,8 @@ pub fn onOutputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
     m.lock.lock();
     defer m.lock.unlock();
 
+    // TODO: remember change happened here
+
     m.output_at = m.timer.read() + debounce_time;
     m.condition.signal();
 }
@@ -377,12 +379,20 @@ fn readThread(m: *Multiplex, conn: *Connection) void {
             return;
         };
 
-        for (msg) |*char| {
-            if (!std.ascii.isPrint(char.*)) {
-                char.* = '.';
+        m.lock.lock();
+        defer m.lock.unlock();
+        if (std.mem.eql(u8, msg, "build")) {
+            log.warn("Websocket triggering build.", .{});
+            m.build_at = m.timer.read() + debounce_time;
+            m.condition.signal();
+        } else {
+            for (msg) |*char| {
+                if (!std.ascii.isPrint(char.*)) {
+                    char.* = '.';
+                }
             }
+            log.warn("Unknown message via websocket: <{s}>", .{msg});
         }
-        log.warn("Unknown message via websocket: <{s}>", .{msg});
     }
 }
 
