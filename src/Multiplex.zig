@@ -13,6 +13,7 @@ const log = std.log.scoped(.multiplex);
 const debounce_time = std.time.ns_per_ms * 10;
 
 const Multiplex = @This();
+const unique_server_id_decoded_len = 20;
 
 gpa: std.mem.Allocator,
 zig_exe: []const u8,
@@ -20,9 +21,14 @@ out_dir_path: []const u8,
 in_dir_paths: []const []const u8,
 website_step_name: []const u8,
 
+/// Sent immediately to clients.  Clients will immediately refresh if a websocket connection
+/// gives a different value.  This ensures state between different server runs doesn't get mixed.
+unique_server_id: [std.base64.standard.Encoder.calcSize(unique_server_id_decoded_len)]u8,
+
 lock: std.Thread.Mutex = .{},
 condition: std.Thread.Condition = .{},
 
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // Everything past this point needs to hold lock to mutate;
 timer: std.time.Timer,
 
@@ -69,13 +75,19 @@ pub fn create(
 ) !*Multiplex {
     const m = try gpa.create(Multiplex);
 
-    const encoded_state = try gpa.dupe(u8,
-        \\ {
-        \\    "state": "live",
-        \\    "file_changes": {},
-        \\ }
-    );
-    errdefer gpa.free(encoded_state);
+    const encoded_state = blk: {
+        var writer: JsonWriter = .{};
+        writer.init(gpa);
+        writer.beginObject();
+        writer.objectField("state");
+        writer.write("live");
+        writer.objectField("file_changes");
+        writer.beginObject();
+        writer.endObject();
+        writer.endObject();
+        break :blk try writer.toOwnedSlice();
+    };
+    errdefer gpa.free(m.encoded_state);
 
     m.* = .{
         .gpa = gpa,
@@ -92,7 +104,16 @@ pub fn create(
             .std_out = std.ArrayList(u8).init(gpa),
             .err_out = std.ArrayList(u8).init(gpa),
         },
+        .unique_server_id = undefined,
     };
+
+    {
+        var usid: [unique_server_id_decoded_len]u8 = undefined;
+        std.crypto.random.bytes(&usid);
+
+        const written = std.base64.standard.Encoder.encode(&m.unique_server_id, &usid);
+        std.debug.assert(written.len == m.unique_server_id.len);
+    }
 
     const loop_thread = try std.Thread.spawn(.{}, Multiplex.loop, .{
         m,
@@ -132,6 +153,7 @@ fn loop(m: *Multiplex) noreturn {
                     writer.beginObject();
                     writer.objectField("state");
                     writer.write("live");
+                    writer.endObject();
                     m.updateState(writer.toOwnedSlice());
                 }
             }
@@ -167,6 +189,7 @@ fn triggerBuild(m: *Multiplex) void {
         writer.beginObject();
         writer.objectField("state");
         writer.write("building");
+        writer.endObject();
         m.updateState(writer.toOwnedSlice());
     }
 
@@ -294,19 +317,33 @@ pub fn onOutputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
 // Connections
 
 pub fn connect(m: *Multiplex, ws: websocket.Connection) !void {
-    m.lock.lock();
-    defer m.lock.unlock();
-
+    var mut_ws = ws;
     errdefer {
-        var mut_ws = ws;
         mut_ws.close();
     }
+
+    {
+        var writer: JsonWriter = .{};
+        writer.init(m.gpa);
+        writer.beginObject();
+        writer.objectField("state");
+        writer.write("unique_server_id");
+        writer.objectField("id");
+        writer.write(m.unique_server_id);
+        writer.endObject();
+        const msg = writer.toOwnedSlice() catch |err| return err;
+        defer m.gpa.free(msg);
+        mut_ws.writeMessage(msg, .text) catch |err| return err;
+    }
+
+    m.lock.lock();
+    defer m.lock.unlock();
 
     const conn = try m.gpa.create(Connection);
     errdefer m.gpa.destroy(conn);
 
     conn.* = .{
-        .ws = ws,
+        .ws = mut_ws,
         .outstanding_read = true,
     };
 
@@ -478,6 +515,7 @@ const JsonWriter = struct {
     }
 
     fn toOwnedSlice(w: *JsonWriter) Error![]u8 {
+        errdefer w.array_list.deinit();
         w.err catch |err| return err;
         return w.array_list.toOwnedSlice();
     }
