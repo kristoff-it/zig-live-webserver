@@ -42,7 +42,6 @@ function newSocket() {
     });
     socket.addEventListener("open", (event) => {
         console.log("connected");
-        socket.send("Hello WS");
     });
 
     // Listen for messages
@@ -55,3 +54,13 @@ function newSocket() {
 }
 
 newSocket();
+
+// TODO(https://github.com/ziglang/zig/issues/14233): remove this, and noop handler.
+// Constantly send data so that Windows Zig doesn't block writing on read.  Yes, this is stupid.
+function spam() {
+    if (socket.readyState === 1) {
+        socket.send("noop");
+    }
+    setTimeout(spam, 100);   
+}
+spam();

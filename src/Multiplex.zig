@@ -125,7 +125,7 @@ fn loop(m: *Multiplex) noreturn {
             if (now >= output_at) {
                 m.output_at = null;
 
-			    if (!m.building and m.build_success) {
+                if (!m.building and m.build_success) {
                     std.debug.print("Fake output\n", .{});
                     var writer: JsonWriter = .{};
                     writer.init(m.gpa);
@@ -385,7 +385,7 @@ fn readThread(m: *Multiplex, conn: *Connection) void {
             log.warn("Websocket triggering build.", .{});
             m.build_at = m.timer.read() + debounce_time;
             m.condition.signal();
-        } else {
+        } else if (std.mem.eql(u8, msg, "noop")) {} else {
             for (msg) |*char| {
                 if (!std.ascii.isPrint(char.*)) {
                     char.* = '.';
