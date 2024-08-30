@@ -3,7 +3,7 @@ const options = @import("options");
 const fs = std.fs;
 const mime = @import("mime");
 const Allocator = std.mem.Allocator;
-const Reloader = @import("Reloader.zig");
+const Multiplex = @import("Multiplex.zig");
 const not_found_html = @embedFile("404.html");
 const reload_js = @embedFile("watcher/reload.js");
 const assert = std.debug.assert;
@@ -34,10 +34,13 @@ pub fn main() void {
     const debug = std.mem.eql(u8, args[5], "Debug");
     const input_dirs = args[6..];
 
-    const reloader = Reloader.start(gpa, zig_exe, root_dir_path, input_dirs, rebuild_step_name) catch |err| {
-        failWithError("Starting reloader", err);
-    };
     _ = debug;
+    _ = input_dirs;
+    _ = rebuild_step_name;
+    _ = zig_exe;
+    const multiplex = Multiplex.create(gpa) catch |err| {
+        failWithError("Starting multiplex", err);
+    };
 
     var root_dir: fs.Dir = fs.cwd().openDir(root_dir_path, .{}) catch |err| failWithError("open serving directory", err);
     defer root_dir.close();
@@ -63,7 +66,7 @@ pub fn main() void {
             };
             request.gpa = gpa;
             request.public_dir = root_dir;
-            request.reloader = reloader;
+            request.multiplex = multiplex;
             request.conn = tcp_server.accept() catch |err| {
                 switch (err) {
                     error.ConnectionAborted, error.ConnectionResetByPeer => {
@@ -100,7 +103,8 @@ const Request = struct {
     // Fields are in initialization order.
     gpa: std.mem.Allocator,
     public_dir: std.fs.Dir,
-    reloader: *Reloader,
+    // reloader: *Reloader,
+    multiplex: *Multiplex,
     conn: std.net.Server.Connection,
     connection_hijacked: bool,
     allocator_arena: std.heap.ArenaAllocator,
@@ -134,7 +138,6 @@ const Request = struct {
 
         const path = req.http.head.target;
 
-        std.debug.print(">>{s}<<\n", .{path});
         (handle_req: {
             if (std.mem.startsWith(u8, path, "/" ++ options.frame_path ++ "/")) {
                 break :handle_req req.handleEmbed("index.html", "text/html");
@@ -175,7 +178,8 @@ const Request = struct {
     }
     fn handleWebsocket(req: *Request) !void {
         const ws = try websocket.Connection.init(&req.http);
-        try req.reloader.spawnConnection(ws);
+        // try req.reloader.spawnConnection(ws);
+        try req.multiplex.connect(ws);
         req.connection_hijacked = true;
     }
     fn handleFile(req: *Request) !void {
