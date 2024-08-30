@@ -34,6 +34,23 @@ connections: std.ArrayList(*Connection),
 iteration: u64 = 0,
 encoded_state: []const u8,
 
+// Can't cancel build because kill and collectOuptput/wait are not thread safe, ffs.
+// Will need to make own output collector.
+// build_canceled: bool = false,
+
+// build owned by build thread, NOT the lock while build_process is not null.
+building: bool = false,
+build: struct {
+    process: ?std.process.Child = null,
+    std_out: std.ArrayList(u8),
+    err_out: std.ArrayList(u8),
+    term: std.process.Child.Term = .{
+        .Unknown = 0,
+    },
+},
+// If last build had an error, display it instead of watching output.
+build_success: bool = true,
+
 const Connection = struct {
     ws: websocket.Connection,
     iteration_sent: ?u64 = null,
@@ -70,6 +87,11 @@ pub fn create(
         .timer = try std.time.Timer.start(),
         .connections = std.ArrayList(*Connection).init(gpa),
         .encoded_state = encoded_state,
+
+        .build = .{
+            .std_out = std.ArrayList(u8).init(gpa),
+            .err_out = std.ArrayList(u8).init(gpa),
+        },
     };
 
     const loop_thread = try std.Thread.spawn(.{}, Multiplex.loop, .{
@@ -92,16 +114,26 @@ fn loop(m: *Multiplex) noreturn {
     while (true) {
         const now = m.timer.read();
         if (m.build_at) |build_at| {
-            if (now >= build_at) {
-                std.debug.print("Fake build\n", .{});
+            // TODO: Would prefer to cancel and restart build, instead will wait for it to finish.
+            if (now >= build_at and !m.building) {
                 m.build_at = null;
+                m.triggerBuild();
             }
         }
 
         if (m.output_at) |output_at| {
             if (now >= output_at) {
-                std.debug.print("Fake output\n", .{});
                 m.output_at = null;
+
+                {
+                    std.debug.print("Fake output\n", .{});
+                    var writer: JsonWriter = .{};
+                    writer.init(m.gpa);
+                    writer.beginObject();
+                    writer.objectField("state");
+                    writer.write("live");
+                    m.updateState(writer.toOwnedSlice());
+                }
             }
         }
 
@@ -111,6 +143,117 @@ fn loop(m: *Multiplex) noreturn {
         ) -| now;
         m.condition.timedWait(&m.lock, wait_time) catch {};
     }
+}
+
+//////////////////////////////////////////////////////
+// Building
+
+fn triggerBuild(m: *Multiplex) void {
+    std.debug.assert(!m.lock.tryLock());
+    std.debug.assert(!m.building);
+    std.debug.assert(m.build.process == null);
+
+    log.info("Starting build", .{});
+
+    const args: []const []const u8 = &.{
+        m.zig_exe,
+        "build",
+        m.website_step_name,
+    };
+
+    {
+        var writer: JsonWriter = .{};
+        writer.init(m.gpa);
+        writer.beginObject();
+        writer.objectField("state");
+        writer.write("building");
+        m.updateState(writer.toOwnedSlice());
+    }
+
+    m.build.std_out.clearAndFree();
+    m.build.err_out.clearAndFree();
+    m.build.process = std.process.Child.init(args, m.gpa);
+    m.build.process.?.stdout_behavior = .Pipe;
+    m.build.process.?.stderr_behavior = .Pipe;
+    m.build.process.?.spawn() catch |err| {
+        m.internalBuildError(err);
+        return;
+    };
+
+    const build_thread = std.Thread.spawn(.{}, Multiplex.buildThread, .{
+        m,
+    }) catch @panic("Can't start build thread.");
+    build_thread.detach();
+}
+
+fn buildThread(m: *Multiplex) void {
+    m.build.process.?.collectOutput(&m.build.std_out, &m.build.err_out, 1024 * 20) catch |err| {
+        m.lock.lock();
+        defer m.lock.unlock();
+        m.internalBuildError(err);
+        return;
+    };
+
+    m.build.term = m.build.process.?.wait() catch |err| {
+        m.lock.lock();
+        defer m.lock.unlock();
+        m.internalBuildError(err);
+        return;
+    };
+
+    m.lock.lock();
+    defer m.lock.unlock();
+
+    m.building = false;
+    m.build_success = switch (m.build.term) {
+        .Exited => |value| value == 0,
+        else => false,
+    };
+
+    if (m.build_success) {
+        log.info("Build success.", .{});
+        m.output_at = m.timer.read() + debounce_time;
+        m.condition.signal();
+    } else {
+        log.info("Build error.", .{});
+        var writer: JsonWriter = .{};
+        writer.init(m.gpa);
+        writer.beginObject();
+        writer.objectField("state");
+        writer.write("error");
+        writer.objectField("html");
+        writer.write("TODO SHOW ERROR HERE");
+        writer.endObject();
+        m.updateState(writer.toOwnedSlice());
+    }
+
+    m.build.process = null;
+}
+
+fn internalBuildError(m: *Multiplex, err: anyerror) void {
+    std.debug.assert(!m.lock.tryLock());
+    log.info("Internal build error.", .{});
+
+    m.build.std_out.clearAndFree();
+    m.build.err_out.clearAndFree();
+    m.build.err_out.appendSlice("Internal error running build: ") catch @panic("OOM");
+    m.build.err_out.appendSlice(@errorName(err)) catch @panic("OOM");
+    _ = m.build.process.?.kill() catch {};
+    m.build.term = .{ .Unknown = 0 };
+
+    m.building = false;
+    m.build_success = false;
+    m.build.process = null;
+
+    var writer: JsonWriter = .{};
+    writer.init(m.gpa);
+    writer.beginObject();
+    writer.objectField("state");
+    writer.write("error");
+    writer.objectField("html");
+    writer.write(m.build.err_out.items);
+    writer.endObject();
+    m.updateState(writer.toOwnedSlice());
 }
 
 //////////////////////////////////////////////////////
@@ -126,8 +269,7 @@ fn runWatcher(m: *Multiplex) noreturn {
 }
 
 pub fn onInputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
-    std.debug.print("INPUT CHANGE: {s}\n", .{path});
-    _ = name;
+    std.debug.print("INPUT CHANGE: {s} {s}\n", .{ path, name });
 
     m.lock.lock();
     defer m.lock.unlock();
@@ -137,8 +279,7 @@ pub fn onInputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
 }
 
 pub fn onOutputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
-    std.debug.print("OUTPUT CHANGE: {s}\n", .{path});
-    _ = name;
+    std.debug.print("OUTPUT CHANGE: {s} {s}\n", .{ path, name });
 
     m.lock.lock();
     defer m.lock.unlock();
@@ -175,6 +316,23 @@ pub fn connect(m: *Multiplex, ws: websocket.Connection) !void {
     read_thread.detach();
 
     m.sendState(conn);
+}
+
+fn updateState(m: *Multiplex, maybe_new_state: JsonWriter.Error![]const u8) void {
+    std.debug.assert(!m.lock.tryLock());
+
+    const new_state = maybe_new_state catch |err| {
+        @panic(@errorName(err));
+        // TOOD: handle better, except maybe not if this isn't hit in practice.
+    };
+
+    m.gpa.free(m.encoded_state);
+    m.iteration += 1;
+    m.encoded_state = new_state;
+
+    for (m.connections.items) |conn| {
+        m.sendState(conn);
+    }
 }
 
 fn sendState(m: *Multiplex, conn: *Connection) void {
@@ -292,3 +450,45 @@ fn closeConn(m: *Multiplex, conn: *Connection, err: anyerror) void {
     const i = std.mem.indexOfScalar(*Connection, m.connections.items, conn);
     _ = m.connections.swapRemove(i.?);
 }
+
+//////////////////////////////////////////////////////
+// Wrapped Json Writer
+
+const JsonWriter = struct {
+    const Writer = std.json.WriteStream(std.ArrayList(u8).Writer, .{ .checked_to_fixed_depth = 256 });
+    const Error = Writer.Error;
+
+    array_list: std.ArrayList(u8) = undefined,
+    writer: Writer = undefined,
+    err: Error!void = void{},
+
+    fn init(w: *JsonWriter, gpa: std.mem.Allocator) void {
+        w.array_list = std.ArrayList(u8).init(gpa);
+        w.writer = std.json.writeStream(w.array_list.writer(), .{});
+    }
+
+    fn toOwnedSlice(w: *JsonWriter) Error![]u8 {
+        w.err catch |err| return err;
+        return w.array_list.toOwnedSlice();
+    }
+
+    fn beginObject(w: *JsonWriter) void {
+        w.err catch return;
+        w.err = w.writer.beginObject();
+    }
+
+    fn endObject(w: *JsonWriter) void {
+        w.err catch return;
+        w.err = w.writer.endObject();
+    }
+
+    fn objectField(w: *JsonWriter, key: []const u8) void {
+        w.err catch return;
+        w.err = w.writer.objectField(key);
+    }
+
+    fn write(w: *JsonWriter, value: anytype) void {
+        w.err catch return;
+        w.err = w.writer.write(value);
+    }
+};
