@@ -1,7 +1,7 @@
 const MacosWatcher = @This();
 
 const std = @import("std");
-const Reloader = @import("../Reloader.zig");
+const Multiplex = @import("../Multiplex.zig");
 const c = @cImport({
     @cInclude("CoreServices/CoreServices.h");
 });
@@ -48,22 +48,22 @@ pub fn callback(
 
         const is_out = std.mem.startsWith(u8, path, ctx.out_dir_path);
         if (is_out) {
-            ctx.reloader.onOutputChange(base_path, basename);
+            ctx.multiplex.onOutputChange(base_path, basename);
         } else {
-            ctx.reloader.onInputChange(base_path, basename);
+            ctx.multiplex.onInputChange(base_path, basename);
         }
     }
 }
 
 const Context = struct {
-    reloader: *Reloader,
+    multiplex: *Multiplex,
     out_dir_path: []const u8,
 };
 pub fn listen(
     self: *MacosWatcher,
     gpa: std.mem.Allocator,
-    reloader: *Reloader,
-) !void {
+    multiplex: *Multiplex,
+) !noreturn {
     var macos_paths = try gpa.alloc(c.CFStringRef, self.in_dir_paths.len + 1);
     defer gpa.free(macos_paths);
 
@@ -89,7 +89,7 @@ pub fn listen(
     );
 
     var ctx: Context = .{
-        .reloader = reloader,
+        .multiplex = multiplex,
         .out_dir_path = self.out_dir_path,
     };
 

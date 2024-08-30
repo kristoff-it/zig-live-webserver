@@ -35,10 +35,7 @@ pub fn main() void {
     const input_dirs = args[6..];
 
     _ = debug;
-    _ = input_dirs;
-    _ = rebuild_step_name;
-    _ = zig_exe;
-    const multiplex = Multiplex.create(gpa) catch |err| {
+    const multiplex = Multiplex.create(gpa, zig_exe, root_dir_path, input_dirs, rebuild_step_name) catch |err| {
         failWithError("Starting multiplex", err);
     };
 

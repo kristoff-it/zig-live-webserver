@@ -1,7 +1,7 @@
 const LinuxWatcher = @This();
 
 const std = @import("std");
-const Reloader = @import("../Reloader.zig");
+const Multiplex = @import("../Multiplex.zig");
 
 const log = std.log.scoped(.watcher);
 
@@ -277,8 +277,8 @@ fn dropWatch(
 pub fn listen(
     self: *LinuxWatcher,
     gpa: std.mem.Allocator,
-    reloader: *Reloader,
-) !void {
+    multiplex: *Multiplex,
+) !noreturn {
     const Event = std.os.linux.inotify_event;
     const event_size = @sizeOf(Event);
     while (true) {
@@ -322,10 +322,10 @@ pub fn listen(
                     const data = self.watch_fds.get(new_fd).?;
                     switch (data.kind) {
                         .input => {
-                            reloader.onInputChange(data.dir_path, "");
+                            multiplex.onInputChange(data.dir_path, "");
                         },
                         .output => {
-                            reloader.onOutputChange(data.dir_path, "");
+                            multiplex.onOutputChange(data.dir_path, "");
                         },
                     }
                     continue;
@@ -339,10 +339,10 @@ pub fn listen(
                     const moved = self.watch_fds.get(moved_fd).?;
                     switch (moved.kind) {
                         .input => {
-                            reloader.onInputChange(moved.dir_path, "");
+                            multiplex.onInputChange(moved.dir_path, "");
                         },
                         .output => {
-                            reloader.onOutputChange(moved.dir_path, "");
+                            multiplex.onOutputChange(moved.dir_path, "");
                         },
                     }
                     continue;
@@ -354,11 +354,11 @@ pub fn listen(
                     switch (parent.kind) {
                         .input => {
                             const name = event.getName() orelse continue;
-                            reloader.onInputChange(parent.dir_path, name);
+                            multiplex.onInputChange(parent.dir_path, name);
                         },
                         .output => {
                             const name = event.getName() orelse continue;
-                            reloader.onOutputChange(parent.dir_path, name);
+                            multiplex.onOutputChange(parent.dir_path, name);
                         },
                     }
                 }

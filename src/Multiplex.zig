@@ -1,11 +1,24 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const root = @import("root");
 const websocket = @import("websocket.zig");
+const Watcher = switch (builtin.target.os.tag) {
+    .linux => @import("watcher/LinuxWatcher.zig"),
+    .macos => @import("watcher/MacosWatcher.zig"),
+    .windows => @import("watcher/WindowsWatcher.zig"),
+    else => @compileError("unsupported platform"),
+};
 
 const log = std.log.scoped(.multiplex);
+const debounce_time = std.time.ns_per_ms * 10;
 
 const Multiplex = @This();
 
 gpa: std.mem.Allocator,
+zig_exe: []const u8,
+out_dir_path: []const u8,
+in_dir_paths: []const []const u8,
+website_step_name: []const u8,
 
 lock: std.Thread.Mutex = .{},
 condition: std.Thread.Condition = .{},
@@ -30,7 +43,13 @@ const Connection = struct {
     closing: bool = false,
 };
 
-pub fn create(gpa: std.mem.Allocator) !*Multiplex {
+pub fn create(
+    gpa: std.mem.Allocator,
+    zig_exe: []const u8,
+    out_dir_path: []const u8,
+    in_dir_paths: []const []const u8,
+    website_step_name: []const u8,
+) !*Multiplex {
     const m = try gpa.create(Multiplex);
 
     const encoded_state = try gpa.dupe(u8,
@@ -43,6 +62,11 @@ pub fn create(gpa: std.mem.Allocator) !*Multiplex {
 
     m.* = .{
         .gpa = gpa,
+        .zig_exe = zig_exe,
+        .out_dir_path = out_dir_path,
+        .in_dir_paths = in_dir_paths,
+        .website_step_name = website_step_name,
+
         .timer = try std.time.Timer.start(),
         .connections = std.ArrayList(*Connection).init(gpa),
         .encoded_state = encoded_state,
@@ -53,6 +77,11 @@ pub fn create(gpa: std.mem.Allocator) !*Multiplex {
     });
     loop_thread.detach();
 
+    const watcher_thread = try std.Thread.spawn(.{}, Multiplex.runWatcher, .{
+        m,
+    });
+    watcher_thread.detach();
+
     return m;
 }
 
@@ -60,8 +89,22 @@ fn loop(m: *Multiplex) noreturn {
     // Handles tasks on a delay
     m.lock.lock();
 
-    const now = m.timer.read();
     while (true) {
+        const now = m.timer.read();
+        if (m.build_at) |build_at| {
+            if (now >= build_at) {
+                std.debug.print("Fake build\n", .{});
+                m.build_at = null;
+            }
+        }
+
+        if (m.output_at) |output_at| {
+            if (now >= output_at) {
+                std.debug.print("Fake output\n", .{});
+                m.output_at = null;
+            }
+        }
+
         const wait_time = @min(
             m.build_at orelse std.math.maxInt(u64),
             m.output_at orelse std.math.maxInt(u64),
@@ -69,6 +112,43 @@ fn loop(m: *Multiplex) noreturn {
         m.condition.timedWait(&m.lock, wait_time) catch {};
     }
 }
+
+//////////////////////////////////////////////////////
+// File watching
+
+fn runWatcher(m: *Multiplex) noreturn {
+    var watcher = Watcher.init(m.gpa, m.out_dir_path, m.in_dir_paths) catch |err| {
+        root.failWithError("Init file watching", err);
+    };
+    watcher.listen(m.gpa, m) catch |err| {
+        root.failWithError("Watching files", err);
+    };
+}
+
+pub fn onInputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
+    std.debug.print("INPUT CHANGE: {s}\n", .{path});
+    _ = name;
+
+    m.lock.lock();
+    defer m.lock.unlock();
+
+    m.build_at = m.timer.read() + debounce_time;
+    m.condition.signal();
+}
+
+pub fn onOutputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
+    std.debug.print("OUTPUT CHANGE: {s}\n", .{path});
+    _ = name;
+
+    m.lock.lock();
+    defer m.lock.unlock();
+
+    m.output_at = m.timer.read() + debounce_time;
+    m.condition.signal();
+}
+
+//////////////////////////////////////////////////////
+// Connections
 
 pub fn connect(m: *Multiplex, ws: websocket.Connection) !void {
     m.lock.lock();
