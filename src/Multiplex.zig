@@ -29,7 +29,7 @@ lock: std.Thread.Mutex = .{},
 condition: std.Thread.Condition = .{},
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-// Everything past this point needs to hold lock to mutate;
+// Everything past this point needs to hold lock to access
 timer: std.time.Timer,
 
 build_at: ?u64 = null,
@@ -39,6 +39,7 @@ connections: std.ArrayList(*Connection),
 
 iteration: u64 = 0,
 encoded_state: []const u8,
+change_counts: std.StringHashMap(u32),
 
 // Can't cancel build because kill and collectOuptput/wait are not thread safe, ffs.
 // Will need to make own output collector.
@@ -99,6 +100,7 @@ pub fn create(
         .timer = try std.time.Timer.start(),
         .connections = std.ArrayList(*Connection).init(gpa),
         .encoded_state = encoded_state,
+        .change_counts = std.StringHashMap(u32).init(gpa),
 
         .build = .{
             .std_out = std.ArrayList(u8).init(gpa),
@@ -153,6 +155,14 @@ fn loop(m: *Multiplex) noreturn {
                     writer.beginObject();
                     writer.objectField("state");
                     writer.write("live");
+                    writer.objectField("file_changes");
+                    writer.beginObject();
+                    var iter = m.change_counts.iterator();
+                    while (iter.next()) |entry| {
+                        writer.objectField(entry.key_ptr.*);
+                        writer.write(entry.value_ptr.*);
+                    }
+                    writer.endObject();
                     writer.endObject();
                     m.updateState(writer.toOwnedSlice());
                 }
@@ -174,6 +184,7 @@ fn triggerBuild(m: *Multiplex) void {
     std.debug.assert(!m.lock.tryLock());
     std.debug.assert(!m.building);
     std.debug.assert(m.build.process == null);
+    m.building = true;
 
     log.info("Starting build", .{});
 
@@ -302,12 +313,29 @@ pub fn onInputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
 }
 
 pub fn onOutputChange(m: *Multiplex, path: []const u8, name: []const u8) void {
-    std.debug.print("OUTPUT CHANGE: {s} {s}\n", .{ path, name });
+    // Zig writes a file using a random name with no extension, then changes the name.
+    if (std.mem.indexOfScalar(u8, name, '.') == null) {
+        return;
+    }
 
+    const joined = std.fs.path.join(m.gpa, &.{ path, name }) catch @panic("OOM?");
+    defer m.gpa.free(joined);
+
+    const relative = std.fs.path.relative(m.gpa, m.out_dir_path, joined) catch @panic("OOM?");
+    var relative_hijacked = false;
+    defer if (!relative_hijacked) m.gpa.free(relative);
+
+    log.debug("change detected on output file: {s}", .{relative});
     m.lock.lock();
     defer m.lock.unlock();
 
-    // TODO: remember change happened here
+    const result = m.change_counts.getOrPut(relative) catch @panic("OOM");
+    if (result.found_existing) {
+        result.value_ptr.* += 1;
+    } else {
+        relative_hijacked = true;
+        result.value_ptr.* = 1;
+    }
 
     m.output_at = m.timer.read() + debounce_time;
     m.condition.signal();
