@@ -90,12 +90,6 @@ pub fn failWithError(operation: []const u8, err: anytype) noreturn {
     std.process.exit(1);
 }
 
-const embed_files = [_][]const u8{
-    "style.css",
-    "script.js",
-    "icon.svg",
-};
-
 const Request = struct {
     // Fields are in initialization order.
     gpa: std.mem.Allocator,
@@ -136,6 +130,12 @@ const Request = struct {
         const path = req.http.head.target;
 
         (handle_req: {
+            const embed_files = [_][]const u8{
+                "style.css",
+                "script.js",
+                "icon.svg",
+            };
+
             if (std.mem.startsWith(u8, path, "/" ++ options.frame_path ++ "/")) {
                 break :handle_req req.handleEmbed("index.html", "text/html");
             } else inline for (embed_files) |embed_file| {

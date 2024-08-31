@@ -8,6 +8,7 @@ const Watcher = switch (builtin.target.os.tag) {
     .windows => @import("watcher/WindowsWatcher.zig"),
     else => @compileError("unsupported platform"),
 };
+const AnsiRenderer = @import("AnsiRenderer.zig");
 
 const log = std.log.scoped(.multiplex);
 const debounce_time = std.time.ns_per_ms * 10;
@@ -249,6 +250,9 @@ fn buildThread(m: *Multiplex) void {
         m.output_at = m.timer.read() + debounce_time;
         m.condition.signal();
     } else {
+        const errMsg = AnsiRenderer.renderSlice(m.gpa, m.build.err_out.items) catch @panic("OOM");
+        defer m.gpa.free(errMsg);
+
         log.info("Build error.", .{});
         var writer: JsonWriter = .{};
         writer.init(m.gpa);
@@ -256,7 +260,7 @@ fn buildThread(m: *Multiplex) void {
         writer.objectField("state");
         writer.write("error");
         writer.objectField("html");
-        writer.write("TODO SHOW ERROR HERE");
+        writer.write(errMsg);
         writer.endObject();
         m.updateState(writer.toOwnedSlice());
     }
