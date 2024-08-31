@@ -34,6 +34,7 @@ navbar.addEventListener("change", function() {
 });
 pathChange("hash", window.location.hash);
 
+const overlay = document.getElementById("overlay");
 let socket = null;
 let reconnect_in_flight = false;
 function newSocket() {
@@ -62,11 +63,22 @@ function newSocket() {
                     window.location.reload();
                 }
             }
+        } else if (msg.state === "live") {
+            overlay.innerHTML = "";
+            overlay.className = "";
+        } else if (msg.state === "building") {
+            overlay.innerHTML = "Building...";
+            overlay.className = "";
+        } else if (msg.state === "error") {
+            overlay.innerHTML = msg.html;
+            overlay.className = "error";
         } else {
             console.log("unknown message", msg);
         }
     });
     socket.addEventListener("close", (event) => {
+        overlay.innerHTML = "Connection Lost.";
+        overlay.className = "error";
         if (!reconnect_in_flight) {
             console.log("Websocket closed, retrying in 3 seconds.", event);
             setTimeout(newSocket, 3000);
