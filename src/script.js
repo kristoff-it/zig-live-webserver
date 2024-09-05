@@ -32,11 +32,37 @@ window.addEventListener("hashchange", function() {
 navbar.addEventListener("change", function() {
     pathChange("navbar", navbar.value);
 });
-pathChange("hash", window.location.hash);
 
 const overlay = document.getElementById("overlay");
 let socket = null;
 let reconnect_in_flight = false;
+let first_update = true;
+let file_update_counts = {};
+
+function check_file_updates(new_counts) {
+    if (first_update) {
+        pathChange("hash", window.location.hash);
+        first_update = false;
+        file_update_counts = new_counts;
+        return;
+    }
+
+    // Could collect which files have changed here, and only refresh those.
+    let need_update = false;
+    for (const file in new_counts) {
+        if (!(file in file_update_counts) || new_counts[file] > file_update_counts[file]) {
+            need_update = true;
+        }
+    }
+
+    file_update_counts = new_counts;
+    if (!need_update) {
+        return;
+    }
+
+    mainframe.contentWindow.location.reload();
+}
+
 function newSocket() {
     reconnect_in_flight = false;
     socket = new WebSocket("ws://" + window.location.host + "/__live_webserver/ws");
@@ -66,6 +92,7 @@ function newSocket() {
         } else if (msg.state === "live") {
             overlay.innerHTML = "";
             overlay.className = "";
+            check_file_updates(msg.file_changes);
         } else if (msg.state === "building") {
             overlay.innerHTML = "Building...";
             overlay.className = "";

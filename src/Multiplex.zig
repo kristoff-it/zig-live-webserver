@@ -150,7 +150,6 @@ fn loop(m: *Multiplex) noreturn {
                 m.output_at = null;
 
                 if (!m.building and m.build_success) {
-                    std.debug.print("Fake output\n", .{});
                     var writer: JsonWriter = .{};
                     writer.init(m.gpa);
                     writer.beginObject();
