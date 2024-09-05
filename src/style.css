@@ -45,6 +45,8 @@ iframe {
     font-size: 1.25em;
     font-family: "Courier New", monospace;
     margin: 0px;
+    text-wrap: wrap;
+    box-sizing: border-box;
 }
 
 #overlay:empty {
