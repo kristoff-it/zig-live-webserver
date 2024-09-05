@@ -2,7 +2,7 @@ const WindowsWatcher = @This();
 
 const std = @import("std");
 const windows = std.os.windows;
-const Reloader = @import("../Reloader.zig");
+const Multiplex = @import("../Multiplex.zig");
 
 const log = std.log.scoped(.watcher);
 
@@ -134,8 +134,8 @@ fn addPath(
 pub fn listen(
     self: *WindowsWatcher,
     gpa: std.mem.Allocator,
-    reloader: *Reloader,
-) !void {
+    multiplex: *Multiplex,
+) !noreturn {
     _ = gpa;
 
     var dont_care: struct {
@@ -185,8 +185,8 @@ pub fn listen(
             }
 
             switch (entry.kind) {
-                .input => reloader.onInputChange(entry.dir_path, filename),
-                .output => reloader.onOutputChange(entry.dir_path, filename),
+                .input => multiplex.onInputChange(entry.dir_path, filename),
+                .output => multiplex.onOutputChange(entry.dir_path, filename),
             }
         }
 
